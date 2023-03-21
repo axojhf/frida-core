@@ -59,7 +59,7 @@ case $host_os in
     fi
 
     if [ -f "$custom_script" ]; then
-      if [ -f "$custom_script" ]; then
+      python3 "$custom_script" "$embedded_agent"
     fi
 
     exec "$resource_compiler" --toolchain=gnu -c "$resource_config" -o "$output_dir/frida-data-agent" "$embedded_agent"
