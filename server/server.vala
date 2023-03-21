@@ -1,7 +1,7 @@
 namespace Frida.Server {
 	private static Application application;
 
-	private string DEFAULT_DIRECTORY = null;
+	private static string DEFAULT_DIRECTORY = null;
 	private static bool output_version = false;
 	private static string? listen_address = null;
 	private static string? certpath = null;
