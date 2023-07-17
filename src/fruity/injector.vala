@@ -214,7 +214,7 @@ namespace Frida.Fruity.Injector {
 			return new GadgetDetails (gadget_port);
 		}
 
-		private void perform_rebase_operations (LLDB.Buffer buffer) throws GLib.Error {
+		private void perform_rebase_operations (Buffer buffer) throws GLib.Error {
 			GLib.Error? pending_error = null;
 
 			module.enumerate_rebases (rebase => {
@@ -238,7 +238,7 @@ namespace Frida.Fruity.Injector {
 				throw pending_error;
 		}
 
-		private void collect_needed_symbols_and_threaded_items (LLDB.Buffer buffer, SymbolQueryBuilder symbols_needed,
+		private void collect_needed_symbols_and_threaded_items (Buffer buffer, SymbolQueryBuilder symbols_needed,
 				ThreadedItemsBuilder threaded_items) throws GLib.Error {
 			Gum.Address slide = module.slide;
 			bool have_threaded_items = false;
@@ -298,7 +298,7 @@ namespace Frida.Fruity.Injector {
 			});
 		}
 
-		private void perform_bind_operations (LLDB.Buffer buffer, SymbolSet symbols) throws GLib.Error {
+		private void perform_bind_operations (Buffer buffer, SymbolSet symbols) throws GLib.Error {
 			GLib.Error? pending_error = null;
 
 			Gum.FoundDarwinBindFunc perform_bind = bind => {
@@ -328,7 +328,7 @@ namespace Frida.Fruity.Injector {
 				throw pending_error;
 		}
 
-		private async uint16 upload (LLDB.Buffer buffer, ThreadedItems threaded_items, ChainedFixups chained_fixups,
+		private async uint16 upload (Buffer buffer, ThreadedItems threaded_items, ChainedFixups chained_fixups,
 				UploadSymbols symbols, Cancellable? cancellable) throws GLib.Error {
 			uint64 code = jit_page;
 			yield lldb.write_byte_array (code, new Bytes.static (UPLOAD_LISTENER_CODE), cancellable);
@@ -432,7 +432,7 @@ namespace Frida.Fruity.Injector {
 			return (uint16) receive_result;
 		}
 
-		private async void perform_upload (LLDB.Buffer buffer, ThreadedItems threaded_items, ChainedFixups chained_fixups,
+		private async void perform_upload (Buffer buffer, ThreadedItems threaded_items, ChainedFixups chained_fixups,
 				uint16 listener_port, uint64 session_id_top, uint64 session_id_bottom, UploadSymbols symbols,
 				Cancellable? cancellable) {
 			try {
@@ -841,16 +841,16 @@ namespace Frida.Fruity.Injector {
 			if (process_info_ptr == null)
 				process_info_ptr = dyld_symbols["__ZN5dyld412gProcessInfoE"];
 
-			LLDB.Breakpoint init_breakpoint = yield lldb.add_breakpoint (libdyld_initialize, cancellable);
+			GDB.Breakpoint init_breakpoint = yield lldb.add_breakpoint (SOFT, libdyld_initialize, 4, cancellable);
 
-			LLDB.Breakpoint? restart_breakpoint = null;
+			GDB.Breakpoint? restart_breakpoint = null;
 			uint64? restart_with_dyld_in_cache = dyld_symbols["__ZN5dyld422restartWithDyldInCacheEPKNS_10KernelArgsEPKN5dyld39MachOFileEPv"];
 			if (restart_with_dyld_in_cache != null)
-				restart_breakpoint = yield lldb.add_breakpoint (restart_with_dyld_in_cache, cancellable);
+				restart_breakpoint = yield lldb.add_breakpoint (SOFT, restart_with_dyld_in_cache, 4, cancellable);
 
-			var exception = yield lldb.continue_until_exception (cancellable);
+			var exception = (LLDB.Exception) yield lldb.continue_until_exception (cancellable);
 
-			LLDB.Breakpoint? hit_breakpoint = exception.breakpoint;
+			GDB.Breakpoint? hit_breakpoint = exception.breakpoint;
 			if (hit_breakpoint == null)
 				throw new Error.UNSUPPORTED ("Unexpected exception");
 
@@ -870,9 +870,9 @@ namespace Frida.Fruity.Injector {
 				yield restart_breakpoint.remove (cancellable);
 				yield init_breakpoint.remove (cancellable);
 				uint64 real_libdyld_initialize = dyld_symbols["__ZN5dyld44APIs19_libdyld_initializeEPKNS_16LibSystemHelpersE"];
-				init_breakpoint = yield lldb.add_breakpoint (real_libdyld_initialize, cancellable);
+				init_breakpoint = yield lldb.add_breakpoint (SOFT, real_libdyld_initialize, 4, cancellable);
 
-				exception = yield lldb.continue_until_exception (cancellable);
+				exception = (LLDB.Exception) yield lldb.continue_until_exception (cancellable);
 
 				hit_breakpoint = exception.breakpoint;
 				if (hit_breakpoint == null)
@@ -899,9 +899,9 @@ namespace Frida.Fruity.Injector {
 					frame_above = yield lldb.read_pointer (frame_above, cancellable);
 			} while (!falls_within_dyld);
 
-			LLDB.Breakpoint caller_breakpoint = yield lldb.add_breakpoint (libsystem_initializer_caller, cancellable);
+			GDB.Breakpoint caller_breakpoint = yield lldb.add_breakpoint (SOFT, libsystem_initializer_caller, 4, cancellable);
 
-			exception = yield lldb.continue_until_exception (cancellable);
+			exception = (LLDB.Exception) yield lldb.continue_until_exception (cancellable);
 
 			hit_breakpoint = exception.breakpoint;
 			if (hit_breakpoint == null)
@@ -912,7 +912,7 @@ namespace Frida.Fruity.Injector {
 		}
 
 		private async void ensure_libsystem_initialized_for_dyld_v3_and_below (Cancellable? cancellable) throws GLib.Error {
-			LLDB.Breakpoint? modern_breakpoint = null;
+			GDB.Breakpoint? modern_breakpoint = null;
 			uint64 launch_with_closure = 0;
 
 			const string[] launch_with_closure_names = {
@@ -928,15 +928,15 @@ namespace Frida.Fruity.Injector {
 			}
 			if (launch_with_closure != 0) {
 				uint64 run_initializers_call = yield find_dyld3_run_initializers_call (launch_with_closure, cancellable);
-				modern_breakpoint = yield lldb.add_breakpoint (run_initializers_call, cancellable);
+				modern_breakpoint = yield lldb.add_breakpoint (SOFT, run_initializers_call, 4, cancellable);
 			}
 
 			uint64 initialize_main_executable = resolve_dyld_symbol ("__ZN4dyld24initializeMainExecutableEv", "initializeMainExecutable");
-			LLDB.Breakpoint legacy_breakpoint = yield lldb.add_breakpoint (initialize_main_executable, cancellable);
+			GDB.Breakpoint legacy_breakpoint = yield lldb.add_breakpoint (SOFT, initialize_main_executable, 4, cancellable);
 
 			var exception = yield lldb.continue_until_exception (cancellable);
 
-			LLDB.Breakpoint? hit_breakpoint = exception.breakpoint;
+			GDB.Breakpoint? hit_breakpoint = exception.breakpoint;
 			if (hit_breakpoint == null)
 				throw new Error.UNSUPPORTED ("Unexpected exception");
 
@@ -1068,7 +1068,7 @@ namespace Frida.Fruity.Injector {
 				"__ZN16ImageLoaderMachO16doGetDOFSectionsERKN11ImageLoader11LinkContextERNSt3__16vectorINS0_7DOFInfoENS4_9allocatorIS6_EEEE",
 				"doModInitEnd");
 			var strcmp_handler = new ModinitStrcmpHandler (strcmp_impl, modinit_start, modinit_end);
-			var strcmp_breakpoint = yield lldb.add_breakpoint (strcmp_impl, cancellable);
+			var strcmp_breakpoint = yield lldb.add_breakpoint (SOFT, strcmp_impl, 4, cancellable);
 			*/
 			ExceptionHandler? strcmp_handler = null;
 
@@ -1162,6 +1162,8 @@ namespace Frida.Fruity.Injector {
 			unowned string output_str = (string) output_bytes.get_data ();
 			foreach (var line in output_str.split ("\n")) {
 				var tokens = line.split ("\t", 2);
+				if (tokens.length != 2)
+					throw new Error.UNSUPPORTED ("Unable to fetch dyld symbols; please file a bug");
 
 				unowned string raw_address = tokens[0];
 				unowned string name = tokens[1];
@@ -1554,7 +1556,7 @@ namespace Frida.Fruity.Injector {
 		}
 
 		private class StringVectorBuilder {
-			private LLDB.BufferBuilder buffer_builder;
+			private BufferBuilder buffer_builder;
 			private Gee.ArrayList<int> vector = new Gee.ArrayList<int> ();
 			private size_t start_offset;
 
@@ -1564,7 +1566,7 @@ namespace Frida.Fruity.Injector {
 				}
 			}
 
-			public StringVectorBuilder (LLDB.BufferBuilder buffer_builder) {
+			public StringVectorBuilder (BufferBuilder buffer_builder) {
 				this.buffer_builder = buffer_builder;
 			}
 
@@ -1621,7 +1623,7 @@ namespace Frida.Fruity.Injector {
 			}
 
 			while (true) {
-				var exception = yield lldb.continue_until_exception (cancellable);
+				var exception = (LLDB.Exception) yield lldb.continue_until_exception (cancellable);
 
 				uint64 pc = exception.context["pc"];
 				if (pc == 1337)
@@ -1704,7 +1706,8 @@ namespace Frida.Fruity.Injector {
 
 			summary.append_printf ("\n\nLOCATION:\n   0x%016" + uint64.FORMAT_MODIFIER + "x\t%s", pc, pc_symbol);
 
-			var frames = yield exception.thread.generate_backtrace (bounds, cancellable);
+			var thread = (LLDB.Thread) exception.thread;
+			var frames = yield thread.generate_backtrace (bounds, cancellable);
 			foreach (var frame in frames) {
 				if (frame.address == 1337)
 					break;

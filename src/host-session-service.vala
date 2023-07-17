@@ -9,11 +9,12 @@ namespace Frida {
 
 		public HostSessionService.with_default_backends () {
 			add_local_backends ();
-#if !IOS && !ANDROID
+#if !IOS && !ANDROID && !TVOS
 			add_backend (new FruityHostSessionBackend ());
 			add_backend (new DroidyHostSessionBackend ());
 #endif
 			add_backend (new SocketHostSessionBackend ());
+			add_backend (new BareboneHostSessionBackend ());
 		}
 
 		public HostSessionService.with_local_backend_only () {
@@ -339,13 +340,23 @@ namespace Frida {
 
 		public async AgentSessionId attach (uint pid, HashTable<string, Variant> options,
 				Cancellable? cancellable) throws Error, IOError {
-			var entry = yield establish (pid, options, cancellable);
+			var raw_opts = options;
+			var opts = SessionOptions._deserialize (raw_opts);
+
+			if (opts.realm == EMULATED) {
+				if (opts.emulated_agent_path == null) {
+					opts.emulated_agent_path = get_emulated_agent_path (pid);
+					raw_opts = opts._serialize ();
+				}
+			}
+
+			var entry = yield establish (pid, raw_opts, cancellable);
 
 			var id = AgentSessionId.generate ();
 			entry.sessions.add (id);
 
 			try {
-				yield entry.provider.open (id, options, cancellable);
+				yield entry.provider.open (id, raw_opts, cancellable);
 			} catch (GLib.Error e) {
 				entry.sessions.remove (id);
 
@@ -477,6 +488,10 @@ namespace Frida {
 
 		protected abstract async Future<IOStream> perform_attach_to (uint pid, HashTable<string, Variant> options,
 			Cancellable? cancellable, out Object? transport) throws Error, IOError;
+
+		protected virtual string? get_emulated_agent_path (uint pid) throws Error {
+			return null;
+		}
 
 		protected string make_agent_parameters (uint pid, string remote_address, HashTable<string, Variant> options) throws Error {
 			var parameters = new StringBuilder (remote_address);

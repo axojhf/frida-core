@@ -14,6 +14,8 @@ namespace Frida.Agent {
 	private class Runner : Object, ProcessInvader, AgentSessionProvider, ExitHandler, ForkHandler, SpawnHandler {
 		public static Runner shared_instance = null;
 		public static Mutex shared_mutex;
+		private static string? cached_agent_path = null;
+		private static Gum.MemoryRange cached_agent_range;
 
 		public string agent_parameters {
 			get;
@@ -23,6 +25,11 @@ namespace Frida.Agent {
 		public string? agent_path {
 			get;
 			construct;
+		}
+
+		public string? emulated_agent_path {
+			get;
+			set;
 		}
 
 		public StopReason stop_reason {
@@ -117,9 +124,10 @@ namespace Frida.Agent {
 					mapped_range = injector_state.mapped_range;
 #endif
 
-				string? agent_path;
-				var agent_range = detect_own_range_and_path (mapped_range, out agent_path);
-				Gum.Cloak.add_range (agent_range);
+				if (cached_agent_path == null) {
+					cached_agent_range = detect_own_range_and_path (mapped_range, out cached_agent_path);
+					Gum.Cloak.add_range (cached_agent_range);
+				}
 
 				var fdt_padder = FileDescriptorTablePadder.obtain ();
 
@@ -131,9 +139,24 @@ namespace Frida.Agent {
 				}
 #endif
 
+#if LINUX
+				var linjector_state = (LinuxInjectorState *) opaque_injector_state;
+				string? agent_parameters_with_transport_uri = null;
+				if (linjector_state != null) {
+					int agent_ctrlfd = linjector_state->agent_ctrlfd;
+					linjector_state->agent_ctrlfd = -1;
+
+					fdt_padder.move_descriptor_if_needed (ref agent_ctrlfd);
+					Gum.Cloak.add_file_descriptor (agent_ctrlfd);
+
+					agent_parameters_with_transport_uri = "socket:%d%s".printf (agent_ctrlfd, agent_parameters);
+					agent_parameters = agent_parameters_with_transport_uri;
+				}
+#endif
+
 				var ignore_scope = new ThreadIgnoreScope (FRIDA_THREAD);
 
-				shared_instance = new Runner (agent_parameters, agent_path, agent_range);
+				shared_instance = new Runner (agent_parameters, cached_agent_path, cached_agent_range);
 
 				try {
 					shared_instance.run ((owned) fdt_padder);
@@ -226,15 +249,19 @@ namespace Frida.Agent {
 
 			disable_child_gating ();
 
-			thread_suspend_monitor = null;
-
 			exceptor = null;
 
 			exit_monitor = null;
 
 			interceptor.end_transaction ();
 
+			interceptor.begin_transaction ();
+
+			thread_suspend_monitor = null;
+
 			invalidate_dbus_context ();
+
+			interceptor.end_transaction ();
 		}
 
 		private void run (owned FileDescriptorTablePadder padder) throws Error {
@@ -745,6 +772,12 @@ namespace Frida.Agent {
 			}
 
 			if (opts.realm == EMULATED) {
+				string? path = opts.emulated_agent_path;
+				if (path == null)
+					throw new Error.NOT_SUPPORTED ("Emulated realm is not supported on this OS");
+				if (emulated_agent_path == null)
+					emulated_agent_path = path;
+
 				AgentSessionProvider emulated_provider = yield get_emulated_provider (cancellable);
 
 				var emulated_opts = new SessionOptions ();
@@ -1314,12 +1347,6 @@ namespace Frida.Agent {
 			try {
 				if (nb_api == null)
 					nb_api = NativeBridgeApi.open ();
-
-				string parent_path = Path.get_dirname (agent_path);
-				string emulated_agent_path = Path.build_filename (parent_path,
-					sizeof (void *) == 8 ? "frida-agent-arm64.so" : "frida-agent-arm.so");
-				if (!FileUtils.test (emulated_agent_path, EXISTS))
-					throw new Error.NOT_SUPPORTED ("Unable to handle emulated processes due to build configuration");
 
 				if (nb_api.load_library_ext != null && nb_api.flavor == LEGACY) {
 					/*

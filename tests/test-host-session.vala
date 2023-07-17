@@ -915,19 +915,21 @@ namespace Frida.HostSessionTest {
 			Thread.usleep (50000);
 
 			/* Warm up static allocations */
-			var session = yield device.attach (process.id);
-			var script = yield session.create_script ("true;");
-			yield script.load ();
-			yield script.unload ();
-			script = null;
-			yield detach_and_wait_for_cleanup (session);
-			session = null;
+			for (int i = 0; i != 2; i++) {
+				var session = yield device.attach (process.id);
+				var script = yield session.create_script ("true;");
+				yield script.load ();
+				yield script.unload ();
+				script = null;
+				yield detach_and_wait_for_cleanup (session);
+				session = null;
+			}
 
 			var usage_before = process.snapshot_resource_usage ();
 
 			for (var i = 0; i != 1; i++) {
-				session = yield device.attach (process.id);
-				script = yield session.create_script ("true;");
+				var session = yield device.attach (process.id);
+				var script = yield session.create_script ("true;");
 				yield script.load ();
 				yield script.unload ();
 				script = null;
@@ -1959,7 +1961,7 @@ namespace Frida.HostSessionTest {
 				var message = Json.from_string (received_message).get_object ();
 				assert_true (message.get_string_member ("type") == "send");
 
-				var uncloaked_ranges = new Gee.ArrayList <string> ();
+				var uncloaked_ranges = new Gee.ArrayList<string> ();
 				message.get_array_member ("payload").foreach_element ((array, index, element) => {
 					var range = element.get_string ();
 					if (!original_ranges.contains (range)) {
@@ -2126,7 +2128,19 @@ namespace Frida.HostSessionTest {
 		}
 
 		private static string target_name_of_native (string name) {
-			string suffix = (Frida.Test.os () == Frida.Test.OS.MACOS) ? "macos" : "ios";
+			string suffix;
+			switch (Frida.Test.os ())
+			{
+				case Frida.Test.OS.MACOS:
+					suffix = "macos";
+					break;
+				case Frida.Test.OS.TVOS:
+					suffix = "tvos";
+					break;
+				default:
+					suffix = "ios";
+					break;
+			}
 
 			return name + "-" + suffix;
 		}
@@ -2456,8 +2470,8 @@ namespace Frida.HostSessionTest {
 
 				string parent_detach_reason = null;
 				string child_detach_reason = null;
-				var parent_messages = new Gee.ArrayList <string> ();
-				var child_messages = new Gee.ArrayList <string> ();
+				var parent_messages = new Gee.ArrayList<string> ();
+				var child_messages = new Gee.ArrayList<string> ();
 				Child the_child = null;
 				bool waiting = false;
 
@@ -2597,7 +2611,7 @@ namespace Frida.HostSessionTest {
 				string parent_detach_reason = null;
 				string child_pre_exec_detach_reason = null;
 				string child_post_exec_detach_reason = null;
-				var child_messages = new Gee.ArrayList <string> ();
+				var child_messages = new Gee.ArrayList<string> ();
 				Child the_child = null;
 				bool waiting = false;
 
@@ -2750,7 +2764,7 @@ namespace Frida.HostSessionTest {
 
 				string pre_exec_detach_reason = null;
 				string post_exec_detach_reason = null;
-				var messages = new Gee.ArrayList <string> ();
+				var messages = new Gee.ArrayList<string> ();
 				Child the_child = null;
 				bool waiting = false;
 
@@ -2933,7 +2947,7 @@ namespace Frida.HostSessionTest {
 
 				string parent_detach_reason = null;
 				string child_detach_reason = null;
-				var child_messages = new Gee.ArrayList <string> ();
+				var child_messages = new Gee.ArrayList<string> ();
 				Child the_child = null;
 				bool waiting = false;
 
@@ -3199,7 +3213,7 @@ namespace Frida.HostSessionTest {
 
 				string parent_detach_reason = null;
 				string child_detach_reason = null;
-				var child_messages = new Gee.ArrayList <string> ();
+				var child_messages = new Gee.ArrayList<string> ();
 				Child the_child = null;
 				bool waiting = false;
 

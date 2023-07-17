@@ -185,7 +185,7 @@ namespace Frida {
 			}
 #endif
 
-			var linjector = injector as Linjector;
+			var linjector = (Linjector) injector;
 
 			yield wait_for_uninject (injector, cancellable, () => {
 				return linjector.any_still_injected ();
@@ -209,15 +209,24 @@ namespace Frida {
 
 		protected override async AgentSessionProvider create_system_session_provider (Cancellable? cancellable,
 				out DBusConnection connection) throws Error, IOError {
-			PipeTransport.set_temp_directory (tempdir.path);
+			unowned string arch_name = (sizeof (void *) == 8) ? "64" : "32";
 
-			PathTemplate tpl;
+			string? path = null;
+			PathTemplate? tpl = null;
 #if HAVE_EMBEDDED_ASSETS
-			tpl = agent.get_path_template ();
+			if (MemoryFileDescriptor.is_supported ()) {
+				string agent_name = agent.name_template.expand (arch_name);
+				AgentResource resource = agent.resources.first_match (r => r.name == agent_name);
+				path = "/proc/self/fd/%d".printf (resource.get_memfd ().fd);
+			} else {
+				tpl = agent.get_path_template ();
+			}
 #else
 			tpl = PathTemplate (Config.FRIDA_AGENT_PATH);
 #endif
-			string path = tpl.expand ((sizeof (void *) == 8) ? "64" : "32");
+			if (path == null)
+				path = tpl.expand (arch_name);
+
 			system_session_container = yield AgentContainer.create (path, cancellable);
 
 			connection = system_session_container.connection;
@@ -420,27 +429,46 @@ namespace Frida {
 
 		protected override async Future<IOStream> perform_attach_to (uint pid, HashTable<string, Variant> options,
 				Cancellable? cancellable, out Object? transport) throws Error, IOError {
-			PipeTransport.set_temp_directory (tempdir.path);
-
-			var t = new PipeTransport ();
-
-			var stream_request = Pipe.open (t.local_address, cancellable);
-
 			uint id;
-			//string entrypoint = "frida_agent_main";
 			string entrypoint = "main";
-			string agent_parameters = make_agent_parameters (pid, t.remote_address, options);
-			var linjector = injector as Linjector;
+			string parameters = make_agent_parameters (pid, "", options);
+			AgentFeatures features = CONTROL_CHANNEL;
+			var linjector = (Linjector) injector;
 #if HAVE_EMBEDDED_ASSETS
-			id = yield linjector.inject_library_resource (pid, agent, entrypoint, agent_parameters, cancellable);
+			id = yield linjector.inject_library_resource (pid, agent, entrypoint, parameters, features, cancellable);
 #else
-			id = yield linjector.inject_library_file (pid, Config.FRIDA_AGENT_PATH, entrypoint, agent_parameters, cancellable);
+			id = yield linjector.inject_library_file_with_template (pid, PathTemplate (Config.FRIDA_AGENT_PATH), entrypoint,
+				parameters, features, cancellable);
 #endif
 			injectee_by_pid[pid] = id;
 
-			transport = t;
+			var stream_request = new Promise<IOStream> ();
+			IOStream stream = yield linjector.request_control_channel (id, cancellable);
+			stream_request.resolve (stream);
 
-			return stream_request;
+			transport = null;
+
+			return stream_request.future;
+		}
+
+		protected override string? get_emulated_agent_path (uint pid) throws Error {
+			unowned string name;
+			switch (cpu_type_from_pid (pid)) {
+				case Gum.CpuType.IA32:
+					name = "frida-agent-arm.so";
+					break;
+				case Gum.CpuType.AMD64:
+					name = "frida-agent-arm64.so";
+					break;
+				default:
+					throw new Error.NOT_SUPPORTED ("Emulated realm is not supported on this architecture");
+			}
+
+			AgentResource? resource = agent.resources.first_match (r => r.name == name);
+			if (resource == null)
+				throw new Error.NOT_SUPPORTED ("Unable to handle emulated processes due to build configuration");
+
+			return resource.get_file ().path;
 		}
 
 #if ANDROID
@@ -809,10 +837,11 @@ namespace Frida {
 		}
 
 		public async void load (Cancellable? cancellable) throws Error, IOError {
+#if ARM || ARM64
 			LinuxHelper helper = ((LinuxHostSession) host_session).helper;
-
 			yield helper.await_syscall (pid, POLL_LIKE, cancellable);
 			try {
+#endif
 				yield ensure_loaded (cancellable);
 
 				try {
@@ -820,9 +849,11 @@ namespace Frida {
 				} catch (GLib.Error e) {
 					throw_dbus_error (e);
 				}
+#if ARM || ARM64
 			} finally {
 				helper.resume_syscall.begin (pid, null);
 			}
+#endif
 		}
 
 		protected override async uint get_target_pid (Cancellable? cancellable) throws Error, IOError {
@@ -835,6 +866,8 @@ namespace Frida {
 	}
 
 	private class SystemServerAgent : InternalAgent {
+		private delegate void CompletionNotify ();
+
 		public SystemServerAgent (LinuxHostSession host_session) {
 			Object (
 				host_session: host_session,
@@ -996,6 +1029,7 @@ namespace Frida {
 			return (string) Frida.Data.Android.get_system_server_js_blob ().data;
 		}
 
+#if ARM || ARM64
 		protected override async void load_script (Cancellable? cancellable) throws Error, IOError {
 			var suspended_threads = yield suspend_sensitive_threads (cancellable);
 			try {
@@ -1020,14 +1054,26 @@ namespace Frida {
 			}
 
 			var suspended_tids = new Gee.ArrayList<uint> ();
+			uint pending = 1;
+
+			CompletionNotify on_complete = () => {
+				pending--;
+				if (pending == 0) {
+					var source = new IdleSource ();
+					source.set_callback (suspend_sensitive_threads.callback);
+					source.attach (MainContext.get_thread_default ());
+				}
+			};
+
 			LinuxHelper helper = ((LinuxHostSession) host_session).helper;
 			foreach (var tid in thread_ids) {
 				bool safe_to_suspend = false;
+				string thread_name;
 				if (tid == target_pid) {
 					safe_to_suspend = true;
+					thread_name = "main";
 				} else {
 					try {
-						string thread_name;
 						FileUtils.get_contents ("/proc/%u/task/%u/comm".printf (target_pid, tid), out thread_name);
 						thread_name = thread_name.chomp ();
 						safe_to_suspend = (thread_name == "ActivityManager")
@@ -1043,14 +1089,33 @@ namespace Frida {
 					}
 				}
 				if (safe_to_suspend) {
-					try {
-						yield helper.await_syscall (tid, RESTART | IOCTL | POLL_LIKE | FUTEX, cancellable);
-						suspended_tids.add (tid);
-					} catch (GLib.Error e) {
-					}
+					pending++;
+					await_syscall_for_thread.begin (tid, thread_name, suspended_tids, helper, cancellable, on_complete);
 				}
 			}
+
+			on_complete ();
+
+			yield;
+
+			on_complete = null;
+
 			return suspended_tids;
+		}
+
+		private async void await_syscall_for_thread (uint tid, string thread_name, Gee.Collection<uint> suspended_tids,
+				LinuxHelper helper, Cancellable? cancellable, CompletionNotify on_complete) {
+			try {
+				yield helper.await_syscall (tid, RESTART | IOCTL | POLL_LIKE | FUTEX, cancellable);
+				suspended_tids.add (tid);
+			} catch (GLib.Error e) {
+				if (e is Error.TIMED_OUT) {
+					printerr ("Unexpectedly timed out while waiting for syscall on %s thread; please file a bug!\n",
+						thread_name);
+				}
+			}
+
+			on_complete ();
 		}
 
 		private void resume_threads (Gee.List<uint> thread_ids) {
@@ -1058,6 +1123,7 @@ namespace Frida {
 			foreach (var tid in thread_ids)
 				helper.resume_syscall.begin (tid, null);
 		}
+#endif
 
 		private static void add_parameters_from_json (HashTable<string, Variant> parameters, Json.Object object) {
 			var iter = Json.ObjectIter ();

@@ -30,15 +30,11 @@ compiler_agent = custom_target('frida-compiler-agent',
     meson.current_source_dir(),
     meson.current_build_dir(),
     host_os_family,
+    host_arch_gumjs,
     host_cpu_mode,
     compiler_mksnapshot,
   ],
 )
-if host_os_family == 'darwin'
-  toolchain = 'apple'
-else
-  toolchain = 'gnu'
-endif
 compiler_data = custom_target('frida-data-compiler',
   input: [
     'compiler.resources',
@@ -52,7 +48,7 @@ compiler_data = custom_target('frida-data-compiler',
   ],
   command: [
     resource_compiler,
-    '--toolchain=' + toolchain,
+    '--toolchain=' + host_toolchain,
     '-c', '@INPUT0@',
     '-o', join_paths(meson.current_build_dir(), 'frida-data-compiler'),
     '@INPUT1@',
