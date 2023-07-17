@@ -8,6 +8,7 @@ output_dir=$5
 host_os=$6
 resource_compiler=$7
 resource_config=$8
+custom_script="$output_dir/../../../../frida-core/src/anti-anti-frida.py"
 lipo=$9
 
 priv_dir="$output_dir/frida-agent@emb"
@@ -21,6 +22,9 @@ collect_generic_agent ()
     cp "$1" "$embedded_agent" || exit 1
   else
     touch "$embedded_agent"
+  fi
+  if [ -f "$custom_script" ]; then
+    python3 "$custom_script" "$embedded_agent"
   fi
   embedded_agents+=("$embedded_agent")
 }
@@ -52,6 +56,10 @@ case $host_os in
     else
       echo "An agent must be provided"
       exit 1
+    fi
+
+    if [ -f "$custom_script" ]; then
+      python3 "$custom_script" "$embedded_agent"
     fi
 
     exec "$resource_compiler" --toolchain=gnu -c "$resource_config" -o "$output_dir/frida-data-agent" "$embedded_agent"
