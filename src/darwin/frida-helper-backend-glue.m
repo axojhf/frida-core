@@ -974,8 +974,10 @@ static void frida_darwin_helper_backend_launch_using_fbs (NSString * identifier,
     FridaDarwinHelperBackendLaunchCompletionHandler on_complete, void * on_complete_target);
 static void frida_darwin_helper_backend_launch_using_sbs (NSString * identifier, NSURL * url, FridaHostSpawnOptions * spawn_options,
     FridaDarwinHelperBackendLaunchCompletionHandler on_complete, void * on_complete_target);
+#ifdef HAVE_TVOS
 static void frida_darwin_helper_backend_launch_using_lsaw (NSString * identifier, NSURL * url, FridaHostSpawnOptions * spawn_options,
     FridaDarwinHelperBackendLaunchCompletionHandler on_complete, void * on_complete_target);
+#endif
 
 static guint frida_kill_application (NSString * identifier);
 static gboolean frida_has_active_prewarm (gint pid);
@@ -1322,6 +1324,8 @@ failure:
   }
 }
 
+#ifdef HAVE_TVOS
+
 static void
 frida_darwin_helper_backend_launch_using_lsaw (NSString * identifier, NSURL * url, FridaHostSpawnOptions * spawn_options,
     FridaDarwinHelperBackendLaunchCompletionHandler on_complete, void * on_complete_target)
@@ -1411,6 +1415,8 @@ failure:
     return;
   }
 }
+
+#endif
 
 void
 _frida_darwin_helper_backend_kill_process (guint pid)
@@ -2023,12 +2029,16 @@ _frida_darwin_helper_backend_prepare_spawn_instance_for_injection (FridaDarwinHe
     instance->modern_entry_address = modern_entry_address;
     legacy_entry_address = 0;
 
-    instance->info_ptr_address = gum_darwin_module_resolve_symbol_address (dyld, "_gProcessInfo");
+    instance->info_ptr_address = gum_darwin_module_resolve_symbol_address (dyld, "__ZL12sProcessInfo");
     if (instance->info_ptr_address == 0)
     {
       instance->info_ptr_address = gum_darwin_module_resolve_symbol_address (dyld, "__ZN5dyld412gProcessInfoE");
       if (instance->info_ptr_address == 0)
-        goto dyld_probe_failed;
+      {
+        instance->info_ptr_address = gum_darwin_module_resolve_symbol_address (dyld, "_gProcessInfo");
+        if (instance->info_ptr_address == 0)
+          goto dyld_probe_failed;
+      }
     }
   }
   else

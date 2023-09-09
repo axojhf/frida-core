@@ -25,53 +25,74 @@ if [ ! -f "$agent" ]; then
   exit 5
 fi
 
+if [ "$arch" = "iphoneos-arm64" ]; then
+  rootless=1
+else
+  rootless=0
+fi
+
+if [ $rootless -eq 1 ]; then
+  sysroot=/var/jb
+else
+  sysroot=""
+fi
+
 tmpdir="$(mktemp -d /tmp/package-server.XXXXXX)"
 
-mkdir -p "$tmpdir/usr/sbin/"
-cp "$executable" "$tmpdir/usr/sbin/frida-server"
-chmod 755 "$tmpdir/usr/sbin/frida-server"
+pkroot=$tmpdir$sysroot
+bindir=$pkroot/usr/sbin
+libdir=$pkroot/usr/lib/frida
+daedir=$pkroot/Library/LaunchDaemons
 
-mkdir -p "$tmpdir/usr/lib/frida/"
-cp "$agent" "$tmpdir/usr/lib/frida/frida-agent.dylib"
-chmod 755 "$tmpdir/usr/lib/frida/frida-agent.dylib"
+mkdir -p "$bindir/"
+cp "$executable" "$bindir/frida-server"
+chmod 755 "$bindir/frida-server"
 
-mkdir -p "$tmpdir/Library/LaunchDaemons/"
-cat >"$tmpdir/Library/LaunchDaemons/re.frida.server.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>re.frida.server</string>
-	<key>Program</key>
-	<string>/usr/sbin/frida-server</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/usr/sbin/frida-server</string>
-	</array>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>_MSSafeMode</key>
-		<string>1</string>
-	</dict>
-	<key>UserName</key>
-	<string>root</string>
-	<key>POSIXSpawnType</key>
-	<string>Interactive</string>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>LimitLoadToSessionType</key>
-	<string>System</string>
-	<key>KeepAlive</key>
-	<true/>
-	<key>ThrottleInterval</key>
-	<integer>5</integer>
-	<key>ExecuteAllowed</key>
-	<true/>
-</dict>
-</plist>
-EOF
-chmod 644 "$tmpdir/Library/LaunchDaemons/re.frida.server.plist"
+mkdir -p "$libdir/"
+cp "$agent" "$libdir/frida-agent.dylib"
+chmod 755 "$libdir/frida-agent.dylib"
+
+mkdir -p "$daedir/"
+(
+  echo '<?xml version="1.0" encoding="UTF-8"?>'
+  echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  echo '<plist version="1.0">'
+  echo "<dict>"
+  echo "	<key>Label</key>"
+  echo "	<string>re.frida.server</string>"
+  echo "	<key>Program</key>"
+  echo "	<string>$sysroot/usr/sbin/frida-server</string>"
+  echo "	<key>ProgramArguments</key>"
+  echo "	<array>"
+  echo "		<string>$sysroot/usr/sbin/frida-server</string>"
+  echo "	</array>"
+  if [ $rootless -eq 0 ]; then
+    echo "	<key>EnvironmentVariables</key>"
+    echo "	<dict>"
+    echo "		<key>_MSSafeMode</key>"
+    echo "		<string>1</string>"
+    echo "	</dict>"
+  fi
+  echo "	<key>UserName</key>"
+  echo "	<string>root</string>"
+  echo "	<key>POSIXSpawnType</key>"
+  echo "	<string>Interactive</string>"
+  echo "	<key>RunAtLoad</key>"
+  echo "	<true/>"
+  if [ $rootless -eq 0 ]; then
+    echo "	<key>LimitLoadToSessionType</key>"
+    echo "	<string>System</string>"
+  fi
+  echo "	<key>KeepAlive</key>"
+  echo "	<true/>"
+  echo "	<key>ThrottleInterval</key>"
+  echo "	<integer>5</integer>"
+  echo "	<key>ExecuteAllowed</key>"
+  echo "	<true/>"
+  echo "</dict>"
+  echo "</plist>"
+) > "$daedir/re.frida.server.plist"
+chmod 644 "$daedir/re.frida.server.plist"
 
 installed_size=$(du -sk "$tmpdir" | cut -f1)
 
@@ -97,11 +118,11 @@ cat >"$tmpdir/DEBIAN/extrainst_" <<EOF
 #!/bin/sh
 
 if [ "\$1" = upgrade ]; then
-  launchctl unload /Library/LaunchDaemons/re.frida.server.plist
+  launchctl unload $sysroot/Library/LaunchDaemons/re.frida.server.plist
 fi
 
 if [ "\$1" = install ] || [ "\$1" = upgrade ]; then
-  launchctl load /Library/LaunchDaemons/re.frida.server.plist
+  launchctl load $sysroot/Library/LaunchDaemons/re.frida.server.plist
 fi
 
 exit 0
@@ -111,7 +132,7 @@ cat >"$tmpdir/DEBIAN/prerm" <<EOF
 #!/bin/sh
 
 if [ "\$1" = remove ] || [ "\$1" = purge ]; then
-  launchctl unload /Library/LaunchDaemons/re.frida.server.plist
+  launchctl unload $sysroot/Library/LaunchDaemons/re.frida.server.plist
 fi
 
 exit 0
