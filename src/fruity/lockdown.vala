@@ -13,9 +13,10 @@ namespace Frida.Fruity {
 		}
 
 		private PlistServiceClient service;
-		private string host_id;
-		private string system_buid;
-		private TlsCertificate tls_certificate;
+		private Plist? pair_record;
+		private string? host_id;
+		private string? system_buid;
+		private TlsCertificate? tls_certificate;
 
 		private Promise<bool>? pending_service_query;
 
@@ -44,7 +45,13 @@ namespace Frida.Fruity {
 			try {
 				var usbmux = yield UsbmuxClient.open (cancellable);
 
-				var pair_record = yield usbmux.read_pair_record (device.udid, cancellable);
+				try {
+					pair_record = yield usbmux.read_pair_record (device.udid, cancellable);
+				} catch (UsbmuxError e) {
+					if (e is UsbmuxError.INVALID_ARGUMENT)
+						throw new LockdownError.NOT_PAIRED ("Not paired");
+					throw e;
+				}
 				try {
 					host_id = pair_record.get_string ("HostID");
 					system_buid = pair_record.get_string ("SystemBUID");
@@ -53,7 +60,6 @@ namespace Frida.Fruity {
 					var key = pair_record.get_bytes_as_string ("HostPrivateKey");
 					tls_certificate = new TlsCertificate.from_pem (string.join ("\n", cert, key), -1);
 				} catch (GLib.Error e) {
-					throw new LockdownError.UNSUPPORTED ("Invalid pair record: %s", e.message);
 				}
 
 				yield usbmux.connect_to_port (device.id, LOCKDOWN_PORT, cancellable);
@@ -62,8 +68,6 @@ namespace Frida.Fruity {
 				service.closed.connect (on_service_closed);
 
 				yield query_type (cancellable);
-
-				yield start_session (cancellable);
 			} catch (UsbmuxError e) {
 				throw new LockdownError.UNSUPPORTED ("%s", e.message);
 			}
@@ -77,6 +81,49 @@ namespace Frida.Fruity {
 
 		private void on_service_closed () {
 			closed ();
+		}
+
+		public async void start_session (Cancellable? cancellable) throws LockdownError, IOError {
+			if (tls_certificate == null)
+				throw new LockdownError.UNSUPPORTED ("Incomplete pair record");
+
+			try {
+				var request = create_request ("StartSession");
+				request.set_string ("HostID", host_id);
+				request.set_string ("SystemBUID", system_buid);
+
+				var response = yield service.query (request, cancellable);
+				if (response.has ("Error"))
+					throw new LockdownError.PROTOCOL ("Unexpected response: %s", response.get_string ("Error"));
+
+				if (response.get_boolean ("EnableSessionSSL"))
+					service.stream = yield start_tls (service.stream, cancellable);
+			} catch (PlistServiceError e) {
+				throw error_from_service (e);
+			} catch (PlistError e) {
+				throw error_from_plist (e);
+			}
+		}
+
+		private async TlsConnection start_tls (IOStream stream, Cancellable? cancellable) throws LockdownError, IOError {
+			try {
+				var server_identity = new NetworkAddress ("apple.com", 62078);
+				var connection = TlsClientConnection.new (stream, server_identity);
+				connection.set_database (null);
+				connection.accept_certificate.connect (on_accept_certificate);
+
+				connection.set_certificate (tls_certificate);
+
+				yield connection.handshake_async (Priority.DEFAULT, cancellable);
+
+				return connection;
+			} catch (GLib.Error e) {
+				throw new LockdownError.PROTOCOL ("%s", e.message);
+			}
+		}
+
+		private bool on_accept_certificate (TlsCertificate peer_cert, TlsCertificateFlags errors) {
+			return true;
 		}
 
 		public async Plist get_value (string? domain, string? key, Cancellable? cancellable = null) throws LockdownError, IOError {
@@ -169,6 +216,39 @@ namespace Frida.Fruity {
 			}
 		}
 
+		public async void unpair (Cancellable? cancellable = null) throws LockdownError, IOError {
+			var request = create_request ("Unpair");
+
+			var record = pair_record.clone ();
+			record.remove ("RootPrivateKey");
+			record.remove ("HostPrivateKey");
+			request.set_dict ("PairRecord", record);
+
+			Plist response;
+			try {
+				response = yield service.query (request, cancellable);
+			} catch (PlistServiceError e) {
+				throw error_from_service (e);
+			}
+			if (response.has ("Error")) {
+				try {
+					var error = response.get_string ("Error");
+					if (error != "InvalidHostID")
+						throw new LockdownError.PROTOCOL ("Unexpected response: %s", error);
+				} catch (Fruity.PlistError e) {
+					throw new LockdownError.PROTOCOL ("%s", e.message);
+				}
+			}
+
+			try {
+				var usbmux = yield UsbmuxClient.open (cancellable);
+				yield usbmux.delete_pair_record (device_details.udid, cancellable);
+			} catch (UsbmuxError e) {
+				if (!(e is UsbmuxError.INVALID_ARGUMENT))
+					throw new LockdownError.PROTOCOL ("%s", e.message);
+			}
+		}
+
 		private async string query_type (Cancellable? cancellable) throws LockdownError, IOError {
 			try {
 				var response = yield service.query (create_request ("QueryType"), cancellable);
@@ -179,46 +259,6 @@ namespace Frida.Fruity {
 			} catch (PlistError e) {
 				throw error_from_plist (e);
 			}
-		}
-
-		private async void start_session (Cancellable? cancellable) throws LockdownError, IOError {
-			try {
-				var request = create_request ("StartSession");
-				request.set_string ("HostID", host_id);
-				request.set_string ("SystemBUID", system_buid);
-
-				var response = yield service.query (request, cancellable);
-				if (response.has ("Error"))
-					throw new LockdownError.PROTOCOL ("Unexpected response: %s", response.get_string ("Error"));
-
-				if (response.get_boolean ("EnableSessionSSL"))
-					service.stream = yield start_tls (service.stream, cancellable);
-			} catch (PlistServiceError e) {
-				throw error_from_service (e);
-			} catch (PlistError e) {
-				throw error_from_plist (e);
-			}
-		}
-
-		private async TlsConnection start_tls (IOStream stream, Cancellable? cancellable) throws LockdownError, IOError {
-			try {
-				var server_identity = new NetworkAddress ("apple.com", 62078);
-				var connection = TlsClientConnection.new (stream, server_identity);
-				connection.set_database (null);
-				connection.accept_certificate.connect (on_accept_certificate);
-
-				connection.set_certificate (tls_certificate);
-
-				yield connection.handshake_async (Priority.DEFAULT, cancellable);
-
-				return connection;
-			} catch (GLib.Error e) {
-				throw new LockdownError.PROTOCOL ("%s", e.message);
-			}
-		}
-
-		private bool on_accept_certificate (TlsCertificate peer_cert, TlsCertificateFlags errors) {
-			return true;
 		}
 
 		private static Plist create_request (string request_type) {
@@ -250,6 +290,7 @@ namespace Frida.Fruity {
 
 	public errordomain LockdownError {
 		INVALID_SERVICE,
+		NOT_PAIRED,
 		UNSUPPORTED,
 		PROTOCOL
 	}

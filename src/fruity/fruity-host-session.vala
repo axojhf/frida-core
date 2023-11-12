@@ -207,7 +207,7 @@ namespace Frida {
 			out Variant? icon) throws Error;
 	}
 
-	public class FruityHostSessionProvider : Object, HostSessionProvider, ChannelProvider, FruityLockdownProvider {
+	public class FruityHostSessionProvider : Object, HostSessionProvider, ChannelProvider, FruityLockdownProvider, Pairable {
 		public string id {
 			get { return device_details.udid.raw_value; }
 		}
@@ -371,6 +371,7 @@ namespace Frida {
 				} else {
 					try {
 						var client = yield Fruity.LockdownClient.open (device_details, cancellable);
+						yield client.start_session (cancellable);
 						return client.stream;
 					} catch (GLib.Error e) {
 						throw new Error.NOT_SUPPORTED ("%s", e.message);
@@ -402,6 +403,7 @@ namespace Frida {
 
 			try {
 				var client = yield Fruity.LockdownClient.open (device_details, cancellable);
+				yield client.start_session (cancellable);
 				client.closed.connect (on_lockdown_client_closed);
 
 				lockdown_client_request.resolve (client);
@@ -423,6 +425,17 @@ namespace Frida {
 			client.closed.disconnect (on_lockdown_client_closed);
 			lockdown_client_request = null;
 			lockdown_client_timer = null;
+		}
+
+		private async void unpair (Cancellable? cancellable) throws Error, IOError {
+			try {
+				var client = yield Fruity.LockdownClient.open (device_details, cancellable);
+				yield client.unpair (cancellable);
+			} catch (Fruity.LockdownError e) {
+				if (e is Fruity.LockdownError.NOT_PAIRED)
+					return;
+				throw new Error.NOT_SUPPORTED ("%s", e.message);
+			}
 		}
 	}
 

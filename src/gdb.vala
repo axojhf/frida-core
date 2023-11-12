@@ -648,6 +648,8 @@ namespace Frida.GDB {
 				string payload = response.payload;
 				if (payload.length == 0)
 					throw new Error.NOT_SUPPORTED ("Feature query not supported by the remote stub");
+				if (payload[0] == 'E')
+					throw new Error.INVALID_ARGUMENT ("Feature document '%s' not found", name);
 
 				status = payload[0];
 
@@ -995,7 +997,7 @@ namespace Frida.GDB {
 				header = yield read_string (1);
 			} while (header == ACK_NOTIFICATION || header == NACK_NOTIFICATION);
 
-			string body;
+			string? body;
 			size_t body_size;
 			try {
 				body = yield input.read_upto_async (CHECKSUM_MARKER, 1, Priority.DEFAULT, io_cancellable, out body_size);
@@ -1004,6 +1006,8 @@ namespace Frida.GDB {
 					throw e;
 				throw new Error.TRANSPORT ("%s", e.message);
 			}
+			if (body == null)
+				body = "";
 
 			string trailer = yield read_string (3);
 
