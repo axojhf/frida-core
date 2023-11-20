@@ -431,7 +431,7 @@ namespace Frida {
 				Cancellable? cancellable, out Object? transport) throws Error, IOError {
 			uint id;
 			string entrypoint = "main";
-			string parameters = make_agent_parameters (pid, t.remote_address, options);
+			string parameters = make_agent_parameters (pid, "", options);
 			AgentFeatures features = CONTROL_CHANNEL;
 			var linjector = (Linjector) injector;
 #if HAVE_EMBEDDED_ASSETS
