@@ -45,7 +45,7 @@ collect_unix_agent ()
   if [ -f "$custom_script" ]; then
     python3 "$custom_script" "$embedded_agent"
   fi
-  embedded_agents+=("$embedded_agent")
+  embedded_assets+=("$embedded_agent")
 }
 
 case $host_os in
