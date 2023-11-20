@@ -3,8 +3,8 @@
 #include <windows.h>
 #include <psapi.h>
 
-static WCHAR * frida_command_line_from_argv (const gchar ** argv, gint argv_length);
-static WCHAR * frida_environment_block_from_envp (const gchar ** envp, gint envp_length);
+static WCHAR * frida_command_line_from_argv (gchar ** argv, gint argv_length);
+static WCHAR * frida_environment_block_from_envp (gchar ** envp, gint envp_length);
 static void frida_append_n_backslashes (GString * str, guint n);
 
 char *
@@ -72,7 +72,7 @@ frida_test_process_backend_create (const char * path, gchar ** argv,
     g_set_error (error,
         FRIDA_ERROR,
         FRIDA_ERROR_NOT_SUPPORTED,
-        "Unable to spawn executable at '%s': 0x%08x\n",
+        "Unable to spawn executable at '%s': 0x%08lx\n",
         path, GetLastError ());
   }
 
@@ -121,7 +121,7 @@ frida_test_process_backend_kill (void * handle)
 }
 
 static WCHAR *
-frida_command_line_from_argv (const gchar ** argv, gint argv_length)
+frida_command_line_from_argv (gchar ** argv, gint argv_length)
 {
   GString * line;
   WCHAR * line_utf16;
@@ -192,7 +192,7 @@ frida_command_line_from_argv (const gchar ** argv, gint argv_length)
 }
 
 static WCHAR *
-frida_environment_block_from_envp (const gchar ** envp, gint envp_length)
+frida_environment_block_from_envp (gchar ** envp, gint envp_length)
 {
   GString * block;
   gint i;

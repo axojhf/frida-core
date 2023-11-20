@@ -68,7 +68,7 @@ static WCHAR * frida_read_registry_string (HKEY key, WCHAR * value_name);
 static WCHAR * frida_read_registry_multi_string (HKEY key, WCHAR * value_name);
 static gpointer frida_read_registry_value (HKEY key, WCHAR * value_name, DWORD expected_type);
 
-static GUID GUID_APPLE_USB = { 0xF0B32BE3, 0x6678, 0x4879, 0x92, 0x30, 0x0E4, 0x38, 0x45, 0xD8, 0x05, 0xEE };
+static GUID GUID_APPLE_USB = { 0xF0B32BE3, 0x6678, 0x4879, { 0x92, 0x30, 0x0E4, 0x38, 0x45, 0xD8, 0x05, 0xEE } };
 
 void
 _frida_fruity_host_session_backend_extract_details_for_device (gint product_id, const char * udid, char ** name, GVariant ** icon,
@@ -287,7 +287,7 @@ frida_foreach_usb_device (const GUID * guid, FridaEnumerateDeviceFunc func, gpoi
   gboolean carry_on = TRUE;
   guint member_index;
 
-  info_set = SetupDiGetClassDevs (guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
+  info_set = SetupDiGetClassDevsW (guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
   if (info_set == INVALID_HANDLE_VALUE)
     goto beach;
 

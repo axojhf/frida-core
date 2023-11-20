@@ -19,7 +19,7 @@ extra_link_args = []
 extra_link_depends = []
 
 if host_os_family != 'windows'
-  platform_deps += [gio_unix_dep]
+  platform_deps += gio_unix_dep
 endif
 
 if host_os_family == 'darwin'
@@ -27,14 +27,18 @@ if host_os_family == 'darwin'
   extra_link_args += '-Wl,-framework,Foundation'
 endif
 
-if host_os_family == 'darwin'
+if host_os_family == 'windows'
+  symfile = 'frida-gadget.symbols'
+  extra_link_args += '-Wl,--retain-symbols-file,' + (meson.current_source_dir() / symfile)
+  extra_link_depends += symfile
+elif host_os_family == 'darwin'
   symlist = 'frida-gadget.symbols'
-  extra_link_args += ['-Wl,-exported_symbols_list,' + join_paths(meson.current_source_dir(), symlist)]
-  extra_link_depends += [symlist]
-elif host_os_family != 'windows'
+  extra_link_args += '-Wl,-exported_symbols_list,' + (meson.current_source_dir() / symlist)
+  extra_link_depends += symlist
+else
   symscript = 'frida-gadget.version'
-  extra_link_args += ['-Wl,--version-script,' + join_paths(meson.current_source_dir(), symscript)]
-  extra_link_depends += [symscript]
+  extra_link_args += '-Wl,--version-script,' + (meson.current_source_dir() / symscript)
+  extra_link_depends += symscript
 endif
 
 if host_os_family in ['linux', 'qnx']

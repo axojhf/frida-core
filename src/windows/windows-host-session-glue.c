@@ -17,8 +17,8 @@
 
 static void frida_child_process_on_death (GPid pid, gint status, gpointer user_data);
 
-static WCHAR * frida_argv_to_command_line (const gchar ** argv, gint argv_length);
-static WCHAR * frida_envp_to_environment_block (const gchar ** envp, gint envp_length);
+static WCHAR * frida_argv_to_command_line (gchar ** argv, gint argv_length);
+static WCHAR * frida_envp_to_environment_block (gchar ** envp, gint envp_length);
 
 static void frida_append_n_backslashes (GString * str, guint n);
 
@@ -34,7 +34,7 @@ _frida_windows_host_session_provider_try_extract_icon (void)
   IEnumIDList * children = NULL;
   ITEMIDLIST * child;
 
-  wcscpy_s (my_computer_parse_string, PARSE_STRING_MAX_LENGTH, L"::");
+  wcscpy (my_computer_parse_string, L"::");
   StringFromGUID2 (&CLSID_MyComputer, my_computer_parse_string + 2, PARSE_STRING_MAX_LENGTH - 2);
 
   if (SHGetDesktopFolder (&desktop_folder) != S_OK)
@@ -81,7 +81,7 @@ _frida_windows_host_session_spawn (FridaWindowsHostSession * self, const gchar *
 {
   FridaChildProcess * process = NULL;
   WCHAR * application_name, * command_line, * environment, * current_directory;
-  STARTUPINFO startup_info;
+  STARTUPINFOW startup_info;
   HANDLE stdin_read = NULL, stdin_write = NULL;
   HANDLE stdout_read = NULL, stdout_write = NULL;
   HANDLE stderr_read = NULL, stderr_write = NULL;
@@ -321,7 +321,7 @@ frida_child_process_on_death (GPid pid, gint status, gpointer user_data)
 }
 
 static WCHAR *
-frida_argv_to_command_line (const gchar ** argv, gint argv_length)
+frida_argv_to_command_line (gchar ** argv, gint argv_length)
 {
   GString * line;
   WCHAR * line_utf16;
@@ -392,7 +392,7 @@ frida_argv_to_command_line (const gchar ** argv, gint argv_length)
 }
 
 static WCHAR *
-frida_envp_to_environment_block (const gchar ** envp, gint envp_length)
+frida_envp_to_environment_block (gchar ** envp, gint envp_length)
 {
   GString * block;
 
@@ -438,7 +438,7 @@ frida_make_pipe (HANDLE * read, HANDLE * write)
 {
   SECURITY_ATTRIBUTES attributes;
   DWORD default_buffer_size = 0;
-  BOOL pipe_created;
+  G_GNUC_UNUSED BOOL pipe_created;
 
   attributes.nLength = sizeof (attributes);
   attributes.bInheritHandle = TRUE;
@@ -451,7 +451,7 @@ frida_make_pipe (HANDLE * read, HANDLE * write)
 static void
 frida_ensure_not_inherited (HANDLE handle)
 {
-  BOOL inherit_flag_updated;
+  G_GNUC_UNUSED BOOL inherit_flag_updated;
 
   inherit_flag_updated = SetHandleInformation (handle, HANDLE_FLAG_INHERIT, 0);
   g_assert (inherit_flag_updated);
