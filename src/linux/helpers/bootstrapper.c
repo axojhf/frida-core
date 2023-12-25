@@ -125,6 +125,7 @@ static bool frida_collect_libc_symbol (const FridaElfExportDetails * details, vo
 static bool frida_collect_android_linker_symbol (const FridaElfExportDetails * details, void * user_data);
 
 static bool frida_probe_process (size_t page_size, FridaProcessLayout * layout);
+static void frida_enumerate_module_symbols_on_disk (void * loaded_base, FridaFoundElfSymbolFunc func, void * user_data);
 static int frida_open_file_for_mapped_range_with_base (void * base);
 static ssize_t frida_open_file_for_matching_maps_line (void * data, size_t size, void * user_data);
 static FridaRtldFlavor frida_detect_rtld_flavor (ElfW(Ehdr) * interpreter);
@@ -235,22 +236,7 @@ frida_resolve_libc_apis (const FridaProcessLayout * layout, FridaLibcApi * libc)
     frida_elf_enumerate_exports (layout->interpreter, frida_collect_android_linker_symbol, &ctx);
 
     if (ctx.total_missing == 4)
-    {
-      int fd;
-      off_t size;
-      void * elf;
-
-      fd = frida_open_file_for_mapped_range_with_base (layout->interpreter);
-      if (fd == -1)
-        return true;
-      size = lseek (fd, 0, SEEK_END);
-      elf = mmap (NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-
-      frida_elf_enumerate_symbols (elf, layout->interpreter, frida_collect_android_linker_symbol, &ctx);
-
-      munmap (elf, size);
-      close (fd);
-    }
+      frida_enumerate_module_symbols_on_disk (layout->interpreter, frida_collect_android_linker_symbol, &ctx);
 
     found_all_or_none = ctx.total_missing == 0 || ctx.total_missing == 4;
     if (!found_all_or_none)
@@ -387,6 +373,9 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
   {
     frida_elf_enumerate_exports (layout->interpreter, frida_collect_interpreter_symbol, layout);
 
+    if (layout->r_debug == NULL)
+      frida_enumerate_module_symbols_on_disk (layout->interpreter, frida_collect_interpreter_symbol, layout);
+
     if (layout->r_debug != NULL)
     {
       FridaRDebug * r = layout->r_debug;
@@ -404,6 +393,9 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
       /*
        * Injecting right after libc has been loaded appears to be risky, e.g. the program's observed __environ might be NULL.
        * So instead of waiting for r_brk to be executed again, we use the program's earliest initializer / entrypoint.
+       *
+       * This still leaves the issue where we might be attaching to a process in the brief moment right after libc has become
+       * visible, but before it's been fully linked in. So we definitely want to move to a better strategy.
        */
       if (layout->libc == NULL && (map = r->r_map) != NULL)
       {
@@ -418,9 +410,14 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
             case DT_INIT:
               layout->r_brk = (void *) (entry->d_un.d_ptr + map->l_addr);
               break;
+            case DT_PREINIT_ARRAY:
             case DT_INIT_ARRAY:
               if (layout->r_brk == NULL)
-                layout->r_brk = *((void **) (entry->d_un.d_ptr + map->l_addr));
+              {
+                void * val = *((void **) (entry->d_un.d_ptr + map->l_addr));
+                if (val != NULL && val != (void *) -1)
+                  layout->r_brk = val;
+              }
               break;
           }
         }
@@ -449,6 +446,25 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
     frida_parse_file ("/proc/self/maps", frida_try_find_libc_from_maps_line, layout);
 
   return true;
+}
+
+static void
+frida_enumerate_module_symbols_on_disk (void * loaded_base, FridaFoundElfSymbolFunc func, void * user_data)
+{
+  int fd;
+  off_t size;
+  void * elf;
+
+  fd = frida_open_file_for_mapped_range_with_base (loaded_base);
+  if (fd == -1)
+    return;
+  size = lseek (fd, 0, SEEK_END);
+  elf = mmap (NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+  frida_elf_enumerate_symbols (elf, loaded_base, func, user_data);
+
+  munmap (elf, size);
+  close (fd);
 }
 
 static int

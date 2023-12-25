@@ -867,6 +867,13 @@ namespace Frida {
 				assert_not_reached ();
 			}
 
+			try {
+				string target = FileUtils.read_link (fallback_ld);
+				string parent_dir = Path.get_dirname (fallback_ld);
+				fallback_ld = Filename.canonicalize (target, parent_dir);
+			} catch (FileError e) {
+			}
+
 #if ANDROID
 			local_android_ld = ProcMapsEntry.find_by_path (local_pid, fallback_ld);
 #endif
@@ -1917,6 +1924,10 @@ namespace Frida {
 			ptrace (CONT, tid);
 		}
 
+		public void step () throws Error {
+			ptrace (SINGLESTEP, tid);
+		}
+
 		public async void resume_until_execution_reaches (uint64 target, Cancellable? cancellable) throws Error, IOError {
 			uint64 target_address = target;
 
@@ -1941,6 +1952,12 @@ namespace Frida {
 			uint32 breakpoint_val = 0x0000000dU;
 			breakpoint_data = (uint8[]) &breakpoint_val;
 #endif
+
+			if (saved_regs.program_counter == target) {
+				step ();
+				yield wait_for_signal (TRAP, cancellable);
+				get_regs (&saved_regs);
+			}
 
 			uint8[] original_code = read_memory (target_address, breakpoint_data.length);
 			write_memory (target_address, breakpoint_data);
@@ -2599,6 +2616,7 @@ namespace Frida {
 		PEEKDATA		= 0x0002,
 		POKEDATA		= 0x0005,
 		CONT			= 0x0007,
+		SINGLESTEP		= 0x0009,
 		ATTACH			= 0x0010,
 		SYSCALL			= 0x0018,
 		GETREGS			= 0x000c,
