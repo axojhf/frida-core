@@ -373,13 +373,13 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
   {
     frida_elf_enumerate_exports (layout->interpreter, frida_collect_interpreter_symbol, layout);
 
-    if (layout->r_debug == NULL)
+    if (layout->r_debug == NULL || layout->r_brk == NULL)
       frida_enumerate_module_symbols_on_disk (layout->interpreter, frida_collect_interpreter_symbol, layout);
 
     if (layout->r_debug != NULL)
     {
       FridaRDebug * r = layout->r_debug;
-      FridaLinkMap * map;
+      FridaLinkMap * map, * program;
 
       for (map = r->r_map; map != NULL; map = map->l_next)
       {
@@ -391,30 +391,44 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
       }
 
       /*
-       * Injecting right after libc has been loaded appears to be risky, e.g. the program's observed __environ might be NULL.
+       * Injecting right after libc has been loaded is risky, e.g. it may not yet be fully linked.
        * So instead of waiting for r_brk to be executed again, we use the program's earliest initializer / entrypoint.
        *
        * This still leaves the issue where we might be attaching to a process in the brief moment right after libc has become
        * visible, but before it's been fully linked in. So we definitely want to move to a better strategy.
        */
-      if (layout->libc == NULL && (map = r->r_map) != NULL)
+      program = r->r_map;
+      if (layout->libc == NULL && program != NULL)
       {
-        const ElfW(Dyn) * entry;
+        const ElfW(Ehdr) * program_elf;
+        ElfW(Addr) addr_delta;
+        const ElfW(Dyn) * entries, * entry;
+
+        program_elf = (const ElfW(Ehdr) *)
+            frida_elf_compute_base_from_phdrs (layout->phdrs, layout->phdr_size, layout->phdr_count, page_size);
+
+        addr_delta = (program_elf->e_type == ET_EXEC)
+            ? 0
+            : (ElfW(Addr)) program_elf;
+
+        entries = (program->l_ld != NULL)
+            ? program->l_ld
+            : frida_elf_find_dynamic_section (program_elf);
 
         layout->r_brk = NULL;
 
-        for (entry = map->l_ld; entry->d_tag != DT_NULL; entry++)
+        for (entry = entries; entry->d_tag != DT_NULL; entry++)
         {
           switch (entry->d_tag)
           {
             case DT_INIT:
-              layout->r_brk = (void *) (entry->d_un.d_ptr + map->l_addr);
+              layout->r_brk = (void *) (entry->d_un.d_ptr + addr_delta);
               break;
             case DT_PREINIT_ARRAY:
             case DT_INIT_ARRAY:
               if (layout->r_brk == NULL)
               {
-                void * val = *((void **) (entry->d_un.d_ptr + map->l_addr));
+                void * val = *((void **) (entry->d_un.d_ptr + addr_delta));
                 if (val != NULL && val != (void *) -1)
                   layout->r_brk = val;
               }
@@ -423,11 +437,7 @@ frida_probe_process (size_t page_size, FridaProcessLayout * layout)
         }
 
         if (layout->r_brk == NULL)
-        {
-          const ElfW(Ehdr) * program = (const ElfW(Ehdr) *)
-              frida_elf_compute_base_from_phdrs (layout->phdrs, layout->phdr_size, layout->phdr_count, page_size);
-          layout->r_brk = (void *) (program->e_entry + map->l_addr);
-        }
+          layout->r_brk = (void *) (program_elf->e_entry + addr_delta);
       }
 
       use_proc_fallback = false;
@@ -630,13 +640,16 @@ frida_collect_interpreter_symbol (const FridaElfExportDetails * details, void * 
   FridaProcessLayout * layout = user_data;
   bool found_both;
 
-  if (details->type == STT_OBJECT && (
+  if (layout->r_debug == NULL &&
+        details->type == STT_OBJECT && (
         strcmp (details->name, "_r_debug") == 0 ||
         strcmp (details->name, "__dl__r_debug") == 0))
     layout->r_debug = details->address;
 
-  if (details->type == STT_FUNC && (
+  if (layout->r_brk == NULL &&
+        details->type == STT_FUNC && (
         strcmp (details->name, "_dl_debug_state") == 0 ||
+        strcmp (details->name, "__dl_rtld_db_dlactivity") == 0 ||
         strcmp (details->name, "rtld_db_dlactivity") == 0))
     layout->r_brk = details->address;
 
